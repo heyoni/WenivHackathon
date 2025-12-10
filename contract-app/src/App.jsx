@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import useAuthStore from './store/authStore';
 import { useDocumentSync } from './hooks/useDocumentSync';
-import { documentsAPI, filesAPI, membersAPI } from './api/client';
+import { documentsAPI, filesAPI, membersAPI, employeesAPI } from './api/client';
 import { CollaborativeInput, CollaborativeTextarea } from './components/CollaborativeInput';
 
 export default function App() {
@@ -23,6 +23,13 @@ export default function App() {
     phone: '',
     address: ''
   });
+
+  // 회사 직원 목록
+  const [companyEmployees, setCompanyEmployees] = useState([]);
+
+  // 스크롤 영역 ref
+  const leftPanelRef = useRef(null);
+  const previewPanelRef = useRef(null);
 
 
   // 현재 단계 (1: 제안, 2: 계약, 3: 착수, 4: 완료)
@@ -219,6 +226,15 @@ export default function App() {
         // 서버의 form_data를 초기값으로 설정
         const serverFormData = doc.form_data || {};
         setInitialFormData({ ...defaultFormData, ...serverFormData });
+
+        // 저장된 현재 단계와 선택된 문서 복원
+        if (serverFormData._currentStep) {
+          setCurrentStep(serverFormData._currentStep);
+        }
+        if (serverFormData._selectedDoc) {
+          setSelectedDoc(serverFormData._selectedDoc);
+        }
+
         setDocumentError(null);
       } catch (err) {
         console.error('문서 로드 실패:', err);
@@ -246,9 +262,29 @@ export default function App() {
       }
     };
 
+    const loadEmployees = async () => {
+      try {
+        const response = await employeesAPI.getEmployees();
+        setCompanyEmployees(response.data);
+      } catch (err) {
+        console.error('직원 목록 로드 실패:', err);
+      }
+    };
+
     loadDocument();
     loadCompanyInfo();
+    loadEmployees();
   }, [documentId, navigate]);
+
+  // 문서 또는 단계 변경 시 스크롤 맨 위로
+  useEffect(() => {
+    if (leftPanelRef.current) {
+      leftPanelRef.current.scrollTop = 0;
+    }
+    if (previewPanelRef.current) {
+      previewPanelRef.current.scrollTop = 0;
+    }
+  }, [selectedDoc, currentStep]);
 
   // 참여연구원
   const [researchers, setResearchers] = useState(() => {
@@ -356,7 +392,17 @@ export default function App() {
 
   // 현재 선택된 문서
   const [selectedDoc, setSelectedDoc] = useState('제안서');
-  
+
+  // 현재 단계와 선택된 문서가 변경될 때 서버에 저장
+  useEffect(() => {
+    if (documentId && !documentLoading && updateFields) {
+      updateFields({
+        _currentStep: currentStep,
+        _selectedDoc: selectedDoc
+      });
+    }
+  }, [currentStep, selectedDoc, documentId, documentLoading, updateFields]);
+
   // AI 생성 중
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
 
@@ -720,95 +766,171 @@ export default function App() {
     const { subtotal, tax, total, applyTruncation } = calculateEstimateTotal();
     const 견적일 = formData.견적서_견적일 ? new Date(formData.견적서_견적일).toLocaleDateString('ko-KR') : '';
 
+    // 항목을 페이지별로 분배 (페이지당 최대 행 수)
+    const ITEMS_PER_PAGE = 18;
+
+    // 모든 행을 flat하게 만들기
+    const allRows = [];
+    estimateData.categories.forEach((category, catIndex) => {
+      category.items.forEach((item, itemIndex) => {
+        allRows.push({
+          type: 'item',
+          category,
+          catIndex,
+          item,
+          itemIndex,
+          isFirstInCategory: itemIndex === 0,
+          categoryItemCount: category.items.length
+        });
+      });
+      allRows.push({
+        type: 'subtotal',
+        category,
+        catIndex
+      });
+    });
+
+    // 페이지별로 분할
+    const pages = [];
+    let currentPage = [];
+    let currentRowCount = 0;
+
+    allRows.forEach((row, idx) => {
+      if (currentRowCount >= ITEMS_PER_PAGE) {
+        pages.push(currentPage);
+        currentPage = [];
+        currentRowCount = 0;
+      }
+      currentPage.push(row);
+      currentRowCount++;
+    });
+    if (currentPage.length > 0) {
+      pages.push(currentPage);
+    }
+
+    // 헤더 컴포넌트
+    const TableHeader = () => (
+      <thead>
+        <tr style={{ backgroundColor: '#e5e7eb' }}>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '12%' }}>항목</th>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '25%' }}>세부 내역</th>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '18%' }}>수량</th>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '15%', textAlign: 'right' }}>단가</th>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '15%', textAlign: 'right' }}>공급가액</th>
+          <th style={{ border: '1px solid #333', padding: '5px', width: '15%' }}>비고</th>
+        </tr>
+      </thead>
+    );
+
     return (
-      <A4Page>
-        <div style={{ fontFamily: "'Nanum Gothic', sans-serif", fontSize: '10pt', padding: '10px' }}>
-          {/* 제목 */}
-          <h1 style={{ fontSize: '24pt', fontWeight: 'bold', textAlign: 'center', marginBottom: '20px' }}>견 적 서</h1>
-
-          {/* 상단 정보 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
-            <div style={{ fontSize: '9pt' }}>
-              <div style={{ marginBottom: '5px' }}>견적일: {견적일}</div>
-              <div>유효기간: {formData.견적서_유효기간 || '견적일로부터 3개월'}</div>
-            </div>
-            <div style={{ border: '1px solid #333', padding: '10px', width: '45%', fontSize: '9pt' }}>
-              <div style={{ fontWeight: 'bold', marginBottom: '5px', borderBottom: '1px solid #333', paddingBottom: '3px' }}>공급자</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '3px' }}>
-                <span>상호:</span><span style={{ fontWeight: 'bold' }}>{companyInfo.name}</span>
-                <span>사업자번호:</span><span>{companyInfo.business_number}</span>
-                <span>대표자:</span><span>{companyInfo.representative}</span>
-                <span>전화번호:</span><span>{companyInfo.phone}</span>
-                <span>주소:</span><span style={{ fontSize: '8pt' }}>{companyInfo.address}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 견적 금액 */}
-          <div style={{ backgroundColor: '#f0f0f0', padding: '10px', marginBottom: '15px', textAlign: 'center', border: '1px solid #333' }}>
-            <span style={{ fontSize: '11pt' }}>견적금액 (공급가액, VAT 포함): </span>
-            <span style={{ fontSize: '14pt', fontWeight: 'bold', color: '#1e40af' }}>{total.toLocaleString()}원</span>
-          </div>
-
-          {/* 테이블 */}
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8pt', marginBottom: '15px' }}>
-            <thead>
-              <tr style={{ backgroundColor: '#e5e7eb' }}>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '12%' }}>항목</th>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '25%' }}>세부 내역</th>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '18%' }}>수량</th>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '15%', textAlign: 'right' }}>단가</th>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '15%', textAlign: 'right' }}>공급가액</th>
-                <th style={{ border: '1px solid #333', padding: '5px', width: '15%' }}>비고</th>
-              </tr>
-            </thead>
-            <tbody>
-              {estimateData.categories.map((category, catIndex) => (
+      <>
+        {pages.map((pageRows, pageIndex) => (
+          <A4Page key={pageIndex}>
+            <div style={{ fontFamily: "'Nanum Gothic', sans-serif", fontSize: '10pt', padding: '10px' }}>
+              {/* 첫 페이지에만 헤더 정보 표시 */}
+              {pageIndex === 0 && (
                 <>
-                  {category.items.map((item, itemIndex) => (
-                    <tr key={`${catIndex}-${itemIndex}`}>
-                      {itemIndex === 0 && (
-                        <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold', verticalAlign: 'top' }} rowSpan={category.items.length + 1}>
-                          {category.name}
-                        </td>
-                      )}
-                      <td style={{ border: '1px solid #333', padding: '5px' }}>{item.name}</td>
-                      <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'center' }}>
-                        {item.qty1}{item.unit1}
-                        {item.qty2 && ` × ${item.qty2}${item.unit2}`}
-                      </td>
-                      <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{item.price?.toLocaleString()}</td>
-                      <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{calculateItemTotal(item).toLocaleString()}</td>
-                      <td style={{ border: '1px solid #333', padding: '5px', fontSize: '7pt' }}>{item.note}</td>
-                    </tr>
-                  ))}
-                  <tr key={`${catIndex}-subtotal`} style={{ backgroundColor: '#f9fafb' }}>
-                    <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }} colSpan={3}>소계</td>
-                    <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }}>{calculateCategoryTotal(category).toLocaleString()}</td>
-                    <td style={{ border: '1px solid #333', padding: '5px' }}></td>
-                  </tr>
+                  <h1 style={{ fontSize: '24pt', fontWeight: 'bold', textAlign: 'center', marginBottom: '20px' }}>견 적 서</h1>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px' }}>
+                    <div style={{ fontSize: '9pt' }}>
+                      <div style={{ marginBottom: '5px' }}>견적일: {견적일}</div>
+                      <div>유효기간: {formData.견적서_유효기간 || '견적일로부터 3개월'}</div>
+                    </div>
+                    <div style={{ border: '1px solid #333', padding: '10px', width: '45%', fontSize: '9pt' }}>
+                      <div style={{ fontWeight: 'bold', marginBottom: '5px', borderBottom: '1px solid #333', paddingBottom: '3px' }}>공급자</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: '3px' }}>
+                        <span>상호:</span><span style={{ fontWeight: 'bold' }}>{companyInfo.name} <span style={{ marginLeft: '10px', color: '#999' }}>(인)</span></span>
+                        <span>사업자번호:</span><span>{companyInfo.business_number}</span>
+                        <span>대표자:</span><span>{companyInfo.representative}</span>
+                        <span>전화번호:</span><span>{companyInfo.phone}</span>
+                        <span>주소:</span><span style={{ fontSize: '8pt' }}>{companyInfo.address}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ backgroundColor: '#f0f0f0', padding: '10px', marginBottom: '15px', textAlign: 'center', border: '1px solid #333' }}>
+                    <span style={{ fontSize: '11pt' }}>견적금액 (공급가액, VAT 포함): </span>
+                    <span style={{ fontSize: '14pt', fontWeight: 'bold', color: '#1e40af' }}>{total.toLocaleString()}원</span>
+                  </div>
                 </>
-              ))}
-              {/* 합계 */}
-              <tr style={{ backgroundColor: '#e5e7eb' }}>
-                <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold' }} colSpan={4}>소계총합</td>
-                <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }}>{subtotal.toLocaleString()}</td>
-                <td style={{ border: '1px solid #333', padding: '5px' }}></td>
-              </tr>
-              <tr>
-                <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold' }} colSpan={4}>부가세 (10%)</td>
-                <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{tax.toLocaleString()}</td>
-                <td style={{ border: '1px solid #333', padding: '5px' }}></td>
-              </tr>
-              <tr style={{ backgroundColor: '#dbeafe' }}>
-                <td style={{ border: '1px solid #333', padding: '8px', fontWeight: 'bold', fontSize: '10pt' }} colSpan={4}>합계</td>
-                <td style={{ border: '1px solid #333', padding: '8px', textAlign: 'right', fontWeight: 'bold', fontSize: '10pt', color: '#1e40af' }}>{total.toLocaleString()}</td>
-                <td style={{ border: '1px solid #333', padding: '5px', fontSize: '7pt' }}>{applyTruncation ? '만원단위 이하 절사' : ''}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </A4Page>
+              )}
+
+              {/* 이어지는 페이지에는 간단한 헤더 */}
+              {pageIndex > 0 && (
+                <div style={{ marginBottom: '10px', fontSize: '9pt', color: '#666' }}>
+                  견적서 (계속) - {pageIndex + 1} / {pages.length} 페이지
+                </div>
+              )}
+
+              {/* 테이블 */}
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '8pt', marginBottom: '15px' }}>
+                <TableHeader />
+                <tbody>
+                  {pageRows.map((row, rowIndex) => {
+                    if (row.type === 'item') {
+                      // 현재 페이지에서 이 카테고리의 첫 번째 항목인지 확인
+                      const isFirstInThisPage = !pageRows.slice(0, rowIndex).some(
+                        r => r.type === 'item' && r.catIndex === row.catIndex
+                      );
+                      // 현재 페이지에서 이 카테고리의 항목 수
+                      const categoryRowsInPage = pageRows.filter(
+                        r => (r.type === 'item' || r.type === 'subtotal') && r.catIndex === row.catIndex
+                      ).length;
+
+                      return (
+                        <tr key={`${row.catIndex}-${row.itemIndex}`}>
+                          {isFirstInThisPage && (
+                            <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold', verticalAlign: 'top' }} rowSpan={categoryRowsInPage}>
+                              {row.category.name}
+                            </td>
+                          )}
+                          <td style={{ border: '1px solid #333', padding: '5px' }}>{row.item.name}</td>
+                          <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'center' }}>
+                            {row.item.qty1}{row.item.unit1}
+                            {row.item.qty2 && ` × ${row.item.qty2}${row.item.unit2}`}
+                          </td>
+                          <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{row.item.price?.toLocaleString()}</td>
+                          <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{calculateItemTotal(row.item).toLocaleString()}</td>
+                          <td style={{ border: '1px solid #333', padding: '5px', fontSize: '7pt' }}>{row.item.note}</td>
+                        </tr>
+                      );
+                    } else if (row.type === 'subtotal') {
+                      return (
+                        <tr key={`${row.catIndex}-subtotal`} style={{ backgroundColor: '#f9fafb' }}>
+                          <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }} colSpan={3}>소계</td>
+                          <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }}>{calculateCategoryTotal(row.category).toLocaleString()}</td>
+                          <td style={{ border: '1px solid #333', padding: '5px' }}></td>
+                        </tr>
+                      );
+                    }
+                    return null;
+                  })}
+
+                  {/* 마지막 페이지에만 합계 표시 */}
+                  {pageIndex === pages.length - 1 && (
+                    <>
+                      <tr style={{ backgroundColor: '#e5e7eb' }}>
+                        <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold' }} colSpan={4}>소계총합</td>
+                        <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right', fontWeight: 'bold' }}>{subtotal.toLocaleString()}</td>
+                        <td style={{ border: '1px solid #333', padding: '5px' }}></td>
+                      </tr>
+                      <tr>
+                        <td style={{ border: '1px solid #333', padding: '5px', fontWeight: 'bold' }} colSpan={4}>부가세 (10%)</td>
+                        <td style={{ border: '1px solid #333', padding: '5px', textAlign: 'right' }}>{tax.toLocaleString()}</td>
+                        <td style={{ border: '1px solid #333', padding: '5px' }}></td>
+                      </tr>
+                      <tr style={{ backgroundColor: '#dbeafe' }}>
+                        <td style={{ border: '1px solid #333', padding: '8px', fontWeight: 'bold', fontSize: '10pt' }} colSpan={4}>합계</td>
+                        <td style={{ border: '1px solid #333', padding: '8px', textAlign: 'right', fontWeight: 'bold', fontSize: '10pt', color: '#1e40af' }}>{total.toLocaleString()}</td>
+                        <td style={{ border: '1px solid #333', padding: '5px', fontSize: '7pt' }}>{applyTruncation ? '만원단위 이하 절사' : ''}</td>
+                      </tr>
+                    </>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </A4Page>
+        ))}
+      </>
     );
   };
 
@@ -1865,9 +1987,42 @@ export default function App() {
           <>
             <div className="mb-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
               <p className="text-sm text-blue-700 font-medium mb-1">📋 착수계란?</p>
-              <p className="text-xs text-blue-600">계약 착수를 알리는 서류입니다. 계약 정보는 자동으로 반영됩니다.</p>
+              <p className="text-xs text-blue-600">계약 착수를 알리는 서류입니다. 계약 정보를 입력하세요.</p>
             </div>
-            
+
+            <div className="mb-5">
+              <h3 className="font-semibold text-slate-700 mb-3 text-sm">계약 정보</h3>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">계약년월일</label>
+                  <input
+                    type="date"
+                    value={formData.계약년월일 || ''}
+                    onChange={(e) => handleChange('계약년월일', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">착수년월일</label>
+                  <input
+                    type="date"
+                    value={formData.착수년월일 || formData.수행기간_시작 || ''}
+                    onChange={(e) => handleChange('착수년월일', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">완료년월일</label>
+                  <input
+                    type="date"
+                    value={formData.완료년월일 || formData.수행기간_종료 || ''}
+                    onChange={(e) => handleChange('완료년월일', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div className="mb-5">
               <h3 className="font-semibold text-slate-700 mb-3 text-sm">제출일 입력</h3>
               <div className="grid grid-cols-3 gap-2">
@@ -1892,6 +2047,24 @@ export default function App() {
           </>
         );
       } else if (selectedDoc === '인력투입계획서') {
+        // API에서 가져온 직원을 한글 필드명으로 변환 (기관구분, 담당분야는 문서별로 직접 입력)
+        const mappedEmployees = companyEmployees.map(emp => ({
+          성명: emp.name || '',
+          직급: emp.position || '',
+          기관구분: '',  // 문서별 직접 입력
+          생년월일: emp.birth_date || '',
+          학교: emp.school || '',
+          취득년도: emp.graduation_year || '',
+          전공: emp.major || '',
+          학위: emp.degree || '',
+          담당분야: ''  // 문서별 직접 입력
+        }));
+
+        const addEmployeeAsResearcher = (employee) => {
+          const newResearcher = { ...employee };
+          setResearchers(prev => [...prev, newResearcher]);
+        };
+
         return (
           <>
             <div className="mb-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
@@ -1899,8 +2072,41 @@ export default function App() {
               <p className="text-xs text-blue-600">과업에 참여하는 연구원 정보를 작성하는 서류입니다.</p>
             </div>
 
+            {/* 직원 선택 */}
             <div className="mb-5">
-              <h3 className="font-semibold text-slate-700 mb-3 text-sm">참여 연구원</h3>
+              <h3 className="font-semibold text-slate-700 mb-2 text-sm">직원 선택</h3>
+              <p className="text-xs text-slate-500 mb-3">클릭하면 연구원으로 추가됩니다. (직원은 관리자가 등록합니다)</p>
+              {mappedEmployees.length === 0 ? (
+                <div className="text-center py-4 text-slate-400 text-xs bg-slate-50 rounded-lg">
+                  등록된 직원이 없습니다. 관리자 페이지에서 직원을 등록해주세요.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {mappedEmployees.map((emp, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => addEmployeeAsResearcher(emp)}
+                      className="px-3 py-1.5 bg-white border border-slate-200 rounded-full text-xs hover:bg-blue-50 hover:border-blue-300 transition-colors"
+                    >
+                      {emp.성명} <span className="text-slate-400">({emp.직급 || '직급 없음'})</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mb-5">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-semibold text-slate-700 text-sm">참여 연구원 ({researchers.length}명)</h3>
+                {researchers.length > 0 && (
+                  <button
+                    onClick={() => setResearchers([{ 기관구분: '', 성명: '', 직급: '', 생년월일: '', 학교: '', 취득년도: '', 전공: '', 학위: '', 담당분야: '' }])}
+                    className="text-xs text-red-500 hover:underline"
+                  >
+                    전체 초기화
+                  </button>
+                )}
+              </div>
               {researchers.map((r, idx) => (
                 <details key={idx} className="mb-2 bg-slate-50 rounded-lg border border-slate-100" open={idx === 0}>
                   <summary className="p-3 cursor-pointer flex items-center justify-between">
@@ -1925,7 +2131,7 @@ export default function App() {
                   </div>
                 </details>
               ))}
-              <button onClick={addResearcher} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-slate-400 text-xs hover:border-blue-400 hover:text-blue-500">+ 연구원 추가</button>
+              <button onClick={addResearcher} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-slate-400 text-xs hover:border-blue-400 hover:text-blue-500">+ 직접 추가</button>
             </div>
           </>
         );
@@ -1964,11 +2170,34 @@ export default function App() {
 
             {/* 연구내용 */}
             <div className="mb-5">
-              <h3 className="font-semibold text-slate-700 mb-2 text-xs">📝 연구내용별 일정</h3>
+              <div className="flex justify-between items-center mb-2">
+                <h3 className="font-semibold text-slate-700 text-xs">📝 연구내용별 일정 ({scheduleData.length}개)</h3>
+                {scheduleData.length > 1 && (
+                  <button
+                    onClick={() => setScheduleData([{ 연구내용: '', months: [false, false, false, false] }])}
+                    className="text-xs text-red-500 hover:underline"
+                  >
+                    전체 초기화
+                  </button>
+                )}
+              </div>
               <p className="text-xs text-slate-400 mb-3">해당 기간을 체크하면 일정 막대가 표시됩니다.</p>
               {scheduleData.map((row, idx) => (
                 <div key={idx} className="mb-2 p-2 bg-slate-50 rounded-lg">
-                  <input type="text" value={row.연구내용} onChange={(e) => { const newData = [...scheduleData]; newData[idx].연구내용 = e.target.value; setScheduleData(newData); }} className="w-full px-2 py-1 mb-2 border border-slate-200 rounded text-xs" placeholder={`연구내용 ${idx + 1}`} />
+                  <div className="flex gap-2 mb-2">
+                    <input type="text" value={row.연구내용} onChange={(e) => { const newData = [...scheduleData]; newData[idx].연구내용 = e.target.value; setScheduleData(newData); }} className="flex-1 px-2 py-1 border border-slate-200 rounded text-xs" placeholder={`연구내용 ${idx + 1}`} />
+                    {scheduleData.length > 1 && (
+                      <button
+                        onClick={() => {
+                          const newData = scheduleData.filter((_, i) => i !== idx);
+                          setScheduleData(newData);
+                        }}
+                        className="px-2 py-1 text-red-500 hover:bg-red-50 rounded text-xs"
+                      >
+                        삭제
+                      </button>
+                    )}
+                  </div>
                   <div className="grid grid-cols-4 gap-1">
                     {scheduleMonths.map((m, mIdx) => (
                       <label key={mIdx} className="flex items-center justify-center gap-1 cursor-pointer text-xs">
@@ -1979,6 +2208,12 @@ export default function App() {
                   </div>
                 </div>
               ))}
+              <button
+                onClick={() => setScheduleData([...scheduleData, { 연구내용: '', months: [false, false, false, false] }])}
+                className="w-full py-2 border-2 border-dashed border-slate-200 rounded-lg text-slate-400 text-xs hover:border-blue-400 hover:text-blue-500"
+              >
+                + 연구내용 추가
+              </button>
             </div>
           </>
         );
@@ -2234,7 +2469,7 @@ export default function App() {
       <div className="flex h-[calc(100vh-57px)] mt-[57px]">
         {currentStep === 2 ? (
           /* 계약 단계: 전체 너비 레이아웃 */
-          <div className="flex-1 bg-slate-50 overflow-y-auto">
+          <div ref={leftPanelRef} className="flex-1 bg-slate-50 overflow-y-auto">
             <div className="max-w-2xl mx-auto p-8">
               {renderInputPanel()}
               
@@ -2303,7 +2538,7 @@ export default function App() {
               </div>
 
               {/* 내용 - 스크롤 영역 */}
-              <div style={{ flex: 1, overflowY: 'auto' }} className="p-5">
+              <div ref={leftPanelRef} style={{ flex: 1, overflowY: 'auto' }} className="p-5">
                 {renderInputPanel()}
               </div>
               
@@ -2395,7 +2630,7 @@ export default function App() {
             </div>
 
             {/* 미리보기 콘텐츠 - 탭 바 아래 (화면용) */}
-            <div style={{ marginLeft: `${panelWidth}px`, marginTop: '49px' }} className="flex-1 bg-slate-200 p-8 overflow-auto flex flex-col items-center gap-8 screen-only">
+            <div ref={previewPanelRef} style={{ marginLeft: `${panelWidth}px`, marginTop: '49px' }} className="flex-1 bg-slate-200 p-8 overflow-auto flex flex-col items-center gap-8 screen-only">
               {renderPreview()}
             </div>
           </>

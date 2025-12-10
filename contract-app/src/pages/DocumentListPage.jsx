@@ -50,14 +50,17 @@ function DocumentListPage() {
     try {
       setFilesLoading(true);
       const response = await filesAPI.getFiles();
+      // 백엔드에서 dict 형식으로 반환: { "법인등기부등본": {...}, "통장사본": null, ... }
       const filesMap = {};
-      response.data.forEach(file => {
-        filesMap[file.file_type] = {
-          name: file.file_name,
-          data: file.file_data,
-          type: file.mime_type,
-          uploadedAt: file.uploaded_at
-        };
+      Object.entries(response.data).forEach(([fileType, fileData]) => {
+        if (fileData) {
+          filesMap[fileType] = {
+            name: fileData.file_name,
+            data: fileData.file_data,
+            type: fileData.mime_type,
+            uploadedAt: fileData.created_at
+          };
+        }
       });
       setUploadedFiles(filesMap);
     } catch (err) {
@@ -117,8 +120,7 @@ function DocumentListPage() {
         await filesAPI.uploadFile({
           file_type: fileType,
           file_name: file.name,
-          file_data: e.target.result,
-          mime_type: file.type
+          file_data: e.target.result
         });
         loadFiles();
       } catch (err) {
@@ -198,6 +200,14 @@ function DocumentListPage() {
           <h1 className="text-xl font-bold text-slate-800">WeSign</h1>
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-600">{user?.name} ({user?.company?.name})</span>
+            {user?.role === 'admin' && (
+              <button
+                onClick={() => navigate('/admin')}
+                className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+              >
+                회원 관리
+              </button>
+            )}
             <button
               onClick={logout}
               className="text-sm text-slate-500 hover:text-slate-700"
@@ -270,6 +280,17 @@ function DocumentListPage() {
                   const startDate = doc.form_data?.수행기간_시작;
                   const endDate = doc.form_data?.수행기간_종료;
 
+                  // 현재 단계 정보
+                  const currentStep = doc.form_data?._currentStep || 1;
+                  const selectedDoc = doc.form_data?._selectedDoc || '제안서';
+                  const stepInfo = {
+                    1: { name: '제안', color: 'bg-blue-100 text-blue-700', icon: '📝' },
+                    2: { name: '계약', color: 'bg-purple-100 text-purple-700', icon: '📋' },
+                    3: { name: '착수', color: 'bg-orange-100 text-orange-700', icon: '🚀' },
+                    4: { name: '완료', color: 'bg-green-100 text-green-700', icon: '✅' }
+                  };
+                  const step = stepInfo[currentStep] || stepInfo[1];
+
                   return (
                     <div
                       key={doc.id}
@@ -278,7 +299,12 @@ function DocumentListPage() {
                     >
                       <div className="flex justify-between items-start">
                         <div className="flex-1">
-                          <h3 className="font-semibold text-slate-800 text-lg">{docTitle}</h3>
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="font-semibold text-slate-800 text-lg">{docTitle}</h3>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${step.color}`}>
+                              {step.icon} {step.name} - {selectedDoc}
+                            </span>
+                          </div>
                           {(budget || startDate) && (
                             <p className="text-sm text-slate-500 mt-1">
                               {budget && <span>{parseInt(budget.replace(/,/g, '')).toLocaleString()}원</span>}

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, WebSocket, WebSocketDisconnect, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 import json
 
 from app.database import get_db
@@ -231,9 +232,11 @@ async def websocket_endpoint(
                     if changes:
                         document = db.query(Document).filter(Document.id == document_id).first()
                         if document:
-                            current_form_data = document.form_data or {}
+                            # 중요: 새 딕셔너리를 생성해야 SQLAlchemy가 변경을 감지함
+                            current_form_data = dict(document.form_data or {})
                             current_form_data.update(changes)
                             document.form_data = current_form_data
+                            flag_modified(document, "form_data")  # 명시적으로 변경 알림
                             document.updated_at = datetime.utcnow()
                             db.commit()
 

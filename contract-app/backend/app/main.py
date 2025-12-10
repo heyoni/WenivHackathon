@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import engine, Base
-from app.routers import auth, members, documents, files
+from app.routers import auth, members, documents, files, employees
 
 # 테이블 생성
 Base.metadata.create_all(bind=engine)
@@ -27,6 +27,7 @@ app.include_router(auth.router)
 app.include_router(members.router)
 app.include_router(documents.router)
 app.include_router(files.router)
+app.include_router(employees.router)
 
 
 @app.get("/")

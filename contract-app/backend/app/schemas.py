@@ -189,3 +189,41 @@ class CompanyFileResponse(BaseModel):
 
 class CompanyFilesListResponse(BaseModel):
     files: dict  # { "법인등기부등본": CompanyFileResponse, ... }
+
+
+# Employee (직원 관리) - 성명, 직급, 학력만 관리
+class EmployeeCreate(BaseModel):
+    name: str
+    position: Optional[str] = None
+    birth_date: Optional[str] = None
+    school: Optional[str] = None
+    graduation_year: Optional[str] = None
+    major: Optional[str] = None
+    degree: Optional[str] = None
+
+
+class EmployeeUpdate(BaseModel):
+    name: Optional[str] = None
+    position: Optional[str] = None
+    birth_date: Optional[str] = None
+    school: Optional[str] = None
+    graduation_year: Optional[str] = None
+    major: Optional[str] = None
+    degree: Optional[str] = None
+
+
+class EmployeeResponse(BaseModel):
+    id: UUID
+    company_id: UUID
+    name: str
+    position: Optional[str] = None
+    birth_date: Optional[str] = None
+    school: Optional[str] = None
+    graduation_year: Optional[str] = None
+    major: Optional[str] = None
+    degree: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True

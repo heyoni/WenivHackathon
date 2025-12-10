@@ -38,6 +38,7 @@ class Company(Base):
     invitations = relationship("Invitation", back_populates="company")
     documents = relationship("Document", back_populates="company")
     files = relationship("CompanyFile", back_populates="company")
+    employees = relationship("Employee", back_populates="company")
 
 
 class User(Base):
@@ -104,3 +105,22 @@ class CompanyFile(Base):
 
     company = relationship("Company", back_populates="files")
     uploader = relationship("User", back_populates="uploaded_files")
+
+
+class Employee(Base):
+    """회사 직원 정보 (인력투입계획서용) - 성명, 직급, 학력 관리"""
+    __tablename__ = "employees"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False)
+    name = Column(String, nullable=False)  # 성명
+    position = Column(String, nullable=True)  # 직급
+    birth_date = Column(String, nullable=True)  # 생년월일
+    school = Column(String, nullable=True)  # 학교
+    graduation_year = Column(String, nullable=True)  # 취득년도
+    major = Column(String, nullable=True)  # 전공
+    degree = Column(String, nullable=True)  # 학위
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    company = relationship("Company", back_populates="employees")

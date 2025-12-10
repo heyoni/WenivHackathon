@@ -67,3 +67,12 @@ export const filesAPI = {
   uploadFile: (data) => client.post('/api/files', data),
   deleteFile: (fileType) => client.delete(`/api/files/${encodeURIComponent(fileType)}`),
 };
+
+// Employees API (직원 관리)
+export const employeesAPI = {
+  getEmployees: () => client.get('/api/employees'),
+  getEmployee: (id) => client.get(`/api/employees/${id}`),
+  createEmployee: (data) => client.post('/api/employees', data),
+  updateEmployee: (id, data) => client.patch(`/api/employees/${id}`, data),
+  deleteEmployee: (id) => client.delete(`/api/employees/${id}`),
+};
